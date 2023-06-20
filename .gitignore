@@ -1,3 +1,4 @@
 *.cap
 *.csv
 *.rn
+.vscode

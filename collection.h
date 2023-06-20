@@ -21,13 +21,13 @@ typedef struct AP{
     uint8_t num_clients;
     bool keyCaptured;
 }AP;
-
+//converts string BSSID to Byte array BSSID
 #define PACK_BSSID(old_bssid, new_bssid) do{ \
     sscanf(old_bssid, "%2hhx:%2hhx:%2hhx:%2hhx:%2hhx:%2hhx", \
         &(new_bssid)->oui[0],&(new_bssid)->oui[1],&(new_bssid)->oui[2],\
         &(new_bssid)->nic[0],&(new_bssid)->nic[1],&(new_bssid)->nic[2]);\
 } while (0)
-
+//converts and prints byte BSSID to string BSSID
 #define PRINT_BSSID(bssid) do{ \
     printf("%02X:%02X:%02X:%02X:%02X:%02X", \
         (bssid)->oui[0],(bssid)->oui[1],(bssid)->oui[2],\

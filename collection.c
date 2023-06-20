@@ -9,16 +9,20 @@ int num_channels;
 int main(int argc, char* argv[]){
     num_channels = 0;
 
+    //initialize variables and allocate memory
     initVals();
     
+    //DEBUG: print available channels
     printf("Channels: %d\n\n", num_channels);
     for(int i = 0; i < num_channels; i++){
         printf("Channels: %s\n", channels[i]);
     }
 
+    //read in AP/station data from a CSV
     readCSV("channel1-01.csv");
     printReport();
 
+    //Once done, start freeing memory
     for(int c = 0; c < num_channels; c++){
         for(int a = 0; a < num_APs[c]; a++)
             destroyAP(APs[c][a]);
@@ -34,42 +38,55 @@ int main(int argc, char* argv[]){
     return 0;
 }
 void initVals(){    
+    //get available channels
     channels = getCompatibleChannels(&num_channels);
 
+    //if no channels found, error with wireless device
     if(num_channels == 0){
         printf("ERROR: WIRELESS DEVICE ERROR\n");
         exit(1);
     }
 
+    //allocate space for the AP data based on num of channels
     APs = (AP**) malloc(sizeof(AP*) * num_channels);
     for(int i = 0; i < num_channels; i++){
         APs[i] = NULL;
     }
+
+    //allocate space for the channel data
     num_APs = (int*) malloc(sizeof(int) * num_channels);
     for(int i = 0; i < num_channels; i++){
         num_APs[i] = 0;
     }
 }
 void readCSV(char* fileName){
+    //open up csv
     FILE* csv = fopen(fileName, "r");
+    //var holds length of data on a line
     int line_length;
+    //initialize buffer
     size_t buffer_sz = 255*sizeof(char);
     char* buffer = malloc(buffer_sz);
 
+    //boolean to distinguish if we are on AP or station data
     bool reading_stations = false;
+
     //start reading csv line by line
     while( (line_length = getline(&buffer, &buffer_sz, csv)) != -1){
         //skip over blank lines
         if(line_length == 2) continue;
 
-        
         //printf("\n(%d,%d) %s", line_length, reading_stations, line);
 
         //reading in the access points
         if(!reading_stations){
             //allocate space for a duplicate of the buffer
             char* line = strdup(buffer);
+            //tokenize the line and delimit on ',' since file is CSV
             char* token = strtok(line,",");
+
+            //skip over headers
+            //Station MAC header means transition to station data
             if(strcmp(token,"Station MAC") == 0) reading_stations = true;
             else if(strcmp(token, "BSSID") == 0) ;
             //read in AP data
@@ -87,11 +104,15 @@ void readCSV(char* fileName){
     fclose(csv);
 }
 void read_Station_Data(char* line){
+    //var holds the column number
     int tokens = 0;
+    //bssid of AP
     struct BSSID bssid;
     memset(&bssid, 0, sizeof(BSSID));
+    //bssid of station
     struct BSSID sbssid;
     memset(&sbssid, 0, sizeof(BSSID));
+    //tokenized line for CSV
     char* token = strtok(line,",");
     do{
         //read in station BSSID
@@ -99,13 +120,15 @@ void read_Station_Data(char* line){
             PACK_BSSID(token, &bssid);
         //read in station's association
         else if(tokens == 5){
-            if(strcmp(token," (not associated) ") != 0){
-                PACK_BSSID(token+1, &sbssid);
-            }
-            //pack empty BSSID if not associated
-            else{
+            //if station is not associated to an AP
+            if(strcmp(token," (not associated) ") == 0){
+                //pack empty BSSID if not associated
                 char* temp = "00:00:00:00:00:00";
                 PACK_BSSID(temp, &sbssid);
+            }
+            else{
+                //load BSSID from CSV into struct
+                PACK_BSSID(token+1, &sbssid);
             }
         }
         tokens++;
@@ -118,32 +141,41 @@ void read_Station_Data(char* line){
     printf("\n\n");
 }
 void read_AP_Data(char* line){
-    //if the line is not a blank or header line (contains AP data)
+    //BSSID of AP
     struct BSSID bssid;
+    //ESSID of AP
     char* essid = NULL;
+    //AP channel
     int channel = 0;
+    //column number
     int tokens = 0;
+    //tonized line
     char* token = strtok(line,",");
+
     do{
+        //column 1 (bssid)
         if(tokens == 0)
             PACK_BSSID(token, &bssid);
+        //column 4 (channel)
         else if(tokens == 3){
             sscanf(token, " %d", &channel);
         }
+        //column 14 (essid)
         else if(tokens == 13){
             essid = strdup(token+1);
         }
         tokens++;
     } while( (token = strtok(NULL,",")) != NULL);
 
+    //DEBUG: print AP data
     printf("\nAP BSSID: ");
     PRINT_BSSID(&bssid);
     printf("\nAP ESSID (%lu): %s\n", strlen(essid), essid);
     printf("Channel: %d\n", channel);
+
     //create new AP entry
     AP ap = createAP(essid, bssid);
-
-    //find out where this AP belongs
+    //find out which channel index this AP belongs
     int i;
     for(i = 0; i < num_channels; i++){
         if( atoi(channels[i]) == channel ) break;
@@ -190,6 +222,9 @@ void read_AP_Data(char* line){
     APs[i] = temp;
     APs[i][num_APs[i]-1] = ap;
 }
+
+
+
 AP createAP(char* name, struct BSSID bssid){
     AP ap;
     ap.essid = name;
@@ -210,31 +245,30 @@ void destroyAP(AP ap){
 }
 char** getCompatibleChannels(int* num_channels){
     //create an entry for every channel available
-    FILE* commands;
+    FILE* commands = NULL;
     size_t buffer_sz = 255*sizeof(char);
     char* buffer = malloc(buffer_sz);
+    memset(buffer, 0, buffer_sz);
 
-    //create and execute commannd
+    //create and execute commannd: iwlist {WIRELESS_DEVICE} channel
     char command[strlen(WIRELESS_DEVICE) + strlen("iwlist  channel") + 1];
     strcpy(command , "iwlist ");
     strcat(command, WIRELESS_DEVICE);
     strcat(command, " channel");
     commands = popen(command, "r");
 
-    //printf("command: %s\n", command);
+    //get output from command
     getline(&buffer, &buffer_sz, commands);
 
-    //printf("buffer: %s\n", buffer);
+    //check if error message received from command
     char error_message[] = "no frequency information.";
-    //printf("error: %s\n", error_message);
-
     if( strstr(buffer, error_message) == 0 ){
         pclose(commands);
         free(buffer);
         return NULL;
     }
     
-    //scan for the channels compatible with our wireless device
+    //scan for the number of channels compatible with our wireless device
     char scan[strlen(WIRELESS_DEVICE) + strlen("   %d channels") + 1];
     strcpy(scan, WIRELESS_DEVICE);
     strcat(scan, "  %d channels");
@@ -251,12 +285,14 @@ char** getCompatibleChannels(int* num_channels){
 
     free(buffer);
     pclose(commands);
-
     return channels;
 }
 void printReport(){
+    //iterate through each channel
     for(int c = 0; c < num_channels; c++){
+        //iterate through each AP on each channel
         for(int a = 0; a < num_APs[c]; a++){
+            //print data regarding AP
             printf("%-30s (", APs[c][a].essid);
             PRINT_BSSID(&(APs[c][a].bssid));
             printf("):\n");
