@@ -224,7 +224,6 @@ void read_AP_Data(char* line){
 }
 
 
-
 AP createAP(char* name, struct BSSID bssid){
     AP ap;
     ap.essid = name;
@@ -251,18 +250,18 @@ char** getCompatibleChannels(int* num_channels){
     memset(buffer, 0, buffer_sz);
 
     //create and execute commannd: iwlist {WIRELESS_DEVICE} channel
-    char command[strlen(WIRELESS_DEVICE) + strlen("iwlist  channel") + 1];
+    char command[strlen(WIRELESS_DEVICE) + strlen("iwlist  channel 2>&1") + 1];
     strcpy(command , "iwlist ");
     strcat(command, WIRELESS_DEVICE);
-    strcat(command, " channel");
+    strcat(command, " channel 2>&1");
     commands = popen(command, "r");
 
     //get output from command
     getline(&buffer, &buffer_sz, commands);
-
-    //check if error message received from command
-    char error_message[] = "no frequency information.";
-    if( strstr(buffer, error_message) == 0 ){
+    
+    //check if buffer is empty
+    char error_message[26] = "no frequency information";
+    if( strstr(buffer, error_message) != NULL){
         pclose(commands);
         free(buffer);
         return NULL;
@@ -273,6 +272,7 @@ char** getCompatibleChannels(int* num_channels){
     strcpy(scan, WIRELESS_DEVICE);
     strcat(scan, "  %d channels");
     sscanf(buffer, scan, num_channels);
+    printf("Number of channels found %d\n", *num_channels);
     
     //get the channel numbers that are compatible
     char** channels = (char**) malloc(sizeof(char*) * (*num_channels));
