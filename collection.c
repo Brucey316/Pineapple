@@ -1,14 +1,15 @@
 #include "collection.h"
 
-#define WIRELESS_DEVICE "wlan0"
 AP** APs;
 int* num_APs;
 char** channels;
 int num_channels;
+char* wireless_device;
 
 int main(int argc, char* argv[]){
     num_channels = 0;
-
+    wireless_device = getWirelessDevice();
+    
     //initialize variables and allocate memory
     initVals();
     
@@ -20,7 +21,7 @@ int main(int argc, char* argv[]){
 
     //read in AP/station data from a CSV
     readCSV("channel1-01.csv");
-    printReport();
+    //printReport();
 
     //Once done, start freeing memory
     for(int c = 0; c < num_channels; c++){
@@ -117,28 +118,39 @@ void read_Station_Data(char* line){
     do{
         //read in station BSSID
         if(tokens == 0)
-            PACK_BSSID(token, &bssid);
+            PACK_BSSID(token, &sbssid);
         //read in station's association
         else if(tokens == 5){
             //if station is not associated to an AP
             if(strcmp(token," (not associated) ") == 0){
                 //pack empty BSSID if not associated
                 char* temp = "00:00:00:00:00:00";
-                PACK_BSSID(temp, &sbssid);
+                PACK_BSSID(temp, &bssid);
             }
             else{
                 //load BSSID from CSV into struct
-                PACK_BSSID(token+1, &sbssid);
+                PACK_BSSID(token+1, &bssid);
             }
         }
         tokens++;
     } while( (token = strtok(NULL,",")) != NULL);
-    
+    /*
     printf("%15s", "Station BSSID: ");
-    PRINT_BSSID(&bssid);
-    printf("\n%15s", "AP BSSID: ");
     PRINT_BSSID(&sbssid);
-    printf("\n\n");
+    printf("\n%15s", "AP BSSID: ");
+    PRINT_BSSID(&bssid);
+    printf("\n");*/
+
+    //find associated AP
+    for(int c = 0; c < num_channels; c++){
+        for(int a = 0; a < num_APs[c]; a++){
+            if(memcmp(&(APs[c][a].bssid), &bssid, sizeof(BSSID)) == 0){
+                //printf("AP FOUND\n");
+                addClient(&APs[c][a],sbssid);
+                //printf("Num clients: %d\n", APs[c][a].num_clients);
+            }
+        }
+    }
 }
 void read_AP_Data(char* line){
     //BSSID of AP
@@ -168,10 +180,11 @@ void read_AP_Data(char* line){
     } while( (token = strtok(NULL,",")) != NULL);
 
     //DEBUG: print AP data
+    /*
     printf("\nAP BSSID: ");
     PRINT_BSSID(&bssid);
     printf("\nAP ESSID (%lu): %s\n", strlen(essid), essid);
-    printf("Channel: %d\n", channel);
+    printf("Channel: %d\n", channel);*/
 
     //create new AP entry
     AP ap = createAP(essid, bssid);
@@ -189,11 +202,11 @@ void read_AP_Data(char* line){
     int j;
     for(j = 0; j < num_APs[i]; j++){
         if(memcmp(&(APs[i][j].bssid),&(ap.bssid), sizeof(struct BSSID)) == 0){
-            printf("DUPLICATE FOUND\n");
+            /*printf("DUPLICATE FOUND\n");
             PRINT_BSSID(&(APs[i][j].bssid));
             printf("\n");
             PRINT_BSSID(&(ap.bssid));
-            printf("\n");
+            printf("\n");*/
             break;
         }
     }
@@ -233,14 +246,74 @@ AP createAP(char* name, struct BSSID bssid){
     ap.keyCaptured = false;
     return ap;
 }
-void addClient(AP ap, struct BSSID bssid){
-    ap.num_clients ++;
-    ap.clients = realloc(ap.clients, sizeof(BSSID) * ap.num_clients);
-    ap.clients[ap.num_clients-1] = bssid;
+
+void addClient(AP* ap, struct BSSID bssid){
+    ap->num_clients ++;
+    ap->clients = realloc(ap->clients, sizeof(BSSID) * ap->num_clients);
+    memcpy(&(ap->clients[ap->num_clients-1]), &(bssid), sizeof(BSSID));
 }
+
 void destroyAP(AP ap){
     free(ap.clients);
     free(ap.essid);
+}
+
+char* getWirelessDevice(){
+    //init variables
+    FILE* commands = NULL;
+    size_t buffer_sz = 512*sizeof(char);
+    char* buffer = malloc(buffer_sz);
+    memset(buffer, 0, buffer_sz);
+
+    //run command
+    commands = popen("iw dev", "r");
+
+    //check if command had error
+    if(commands == NULL){
+        printf("ERROR: 'iw dev' failed\n");
+        return NULL;
+    }
+
+    //grab list of potential wireless devices
+    int chars_read = 0;
+    int num_wireless_devices = 1;
+    char** interface = malloc(sizeof(char*) * num_wireless_devices);
+    interface[num_wireless_devices-1] = malloc( sizeof(char) * 50 );
+    while( (chars_read = getline(&buffer, &buffer_sz, commands)) != -1 ){
+        if(sscanf(buffer, "        Interface %s", interface[num_wireless_devices-1]) != 0){
+            num_wireless_devices++;
+            interface = realloc(interface, sizeof(char*) * num_wireless_devices);
+            interface[num_wireless_devices-1] = malloc( sizeof(char) * 50 );
+        } 
+    }
+
+    //print wireless device options
+    num_wireless_devices--;
+    interface = realloc(interface, sizeof(char*) * num_wireless_devices);
+    for(int i = 0; i < num_wireless_devices; i++){
+        printf("Interface %d: %s\n", i+1, interface[i]);
+    }
+    printf("\n\n");
+
+    int selection = 0;
+    do{
+        printf("Choose which interface you want: ");
+        char small_buffer = getchar();
+        if(small_buffer > 48 && small_buffer <= 48+num_wireless_devices){
+            selection = (int) (small_buffer - 48);
+        }
+        printf("\n");
+        fflush(stdin);
+    }while(selection == 0);
+
+    
+    char* answer = strdup(interface[selection-1]);
+    printf("Using: %s", answer);
+    for(int i = 0; i < num_wireless_devices; i++){
+        free(interface[i]);
+    }
+    free(interface);
+    return answer;
 }
 char** getCompatibleChannels(int* num_channels){
     //create an entry for every channel available
@@ -250,9 +323,9 @@ char** getCompatibleChannels(int* num_channels){
     memset(buffer, 0, buffer_sz);
 
     //create and execute commannd: iwlist {WIRELESS_DEVICE} channel
-    char command[strlen(WIRELESS_DEVICE) + strlen("iwlist  channel 2>&1") + 1];
+    char command[strlen(wireless_device) + strlen("iwlist  channel 2>&1") + 1];
     strcpy(command , "iwlist ");
-    strcat(command, WIRELESS_DEVICE);
+    strcat(command, wireless_device);
     strcat(command, " channel 2>&1");
     commands = popen(command, "r");
 
@@ -268,8 +341,8 @@ char** getCompatibleChannels(int* num_channels){
     }
     
     //scan for the number of channels compatible with our wireless device
-    char scan[strlen(WIRELESS_DEVICE) + strlen("   %d channels") + 1];
-    strcpy(scan, WIRELESS_DEVICE);
+    char scan[strlen(wireless_device) + strlen("   %d channels") + 1];
+    strcpy(scan, wireless_device);
     strcat(scan, "  %d channels");
     sscanf(buffer, scan, num_channels);
     printf("Number of channels found %d\n", *num_channels);
@@ -293,12 +366,13 @@ void printReport(){
         //iterate through each AP on each channel
         for(int a = 0; a < num_APs[c]; a++){
             //print data regarding AP
-            printf("%-30s (", APs[c][a].essid);
+            printf("%-35s (", APs[c][a].essid);
             PRINT_BSSID(&(APs[c][a].bssid));
-            printf("):\n");
+            printf("): %d\n", APs[c][a].num_clients);
             for(int client = 0; client < APs[c][a].num_clients; client++){
-                printf("%10s","");
+                printf("%10s","Client:");
                 PRINT_BSSID(&(APs[c][a].clients[client]));
+                printf("\n");
             }
         }
     }
