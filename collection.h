@@ -1,10 +1,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <inttypes.h>
 #include <stdbool.h>
+#include <signal.h>
 
 struct BSSID{
     uint8_t oui[3];
@@ -20,6 +24,7 @@ typedef struct AP{
     //up to 255 clients per AP
     uint8_t num_clients;
     bool keyCaptured;
+    int attacked;
 }AP;
 //converts string BSSID to Byte array BSSID
 #define PACK_BSSID(old_bssid, new_bssid) do{ \
@@ -35,6 +40,10 @@ typedef struct AP{
 } while (0)
 
 void initVals();
+void cleanup();
+int startAirodumpScan(char* prefix, char* channel);
+void stopAirodumpScan(int pid);
+int attackAPs(int channel);
 void readCSV(char* filename);
 void read_Station_Data(char* line);
 void read_AP_Data(char* line);

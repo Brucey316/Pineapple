@@ -5,6 +5,18 @@ int* num_APs;
 char** channels;
 int num_channels;
 char* wireless_device;
+int scanning_state;
+
+void sig_handler(int signal){
+    if(signal == SIGALRM){
+        printf("Scanning stopped\n");
+        scanning_state = 0;
+    }
+    else if(signal == SIGUSR1){
+        printf("ERROR RUNNING AIRODUMP-NG\n");
+        exit(1);
+    }
+}
 
 int main(int argc, char* argv[]){
     num_channels = 0;
@@ -16,32 +28,44 @@ int main(int argc, char* argv[]){
     //DEBUG: print available channels
     printf("Channels: %d\n\n", num_channels);
     for(int i = 0; i < num_channels; i++){
-        printf("Channels: %s\n", channels[i]);
+        printf("Channel: %s\n", channels[i]);
     }
 
-    //read in AP/station data from a CSV
-    readCSV("channel1-01.csv");
+    //start scanning through channels
+    for(int iteration = 1; iteration <= 4; iteration++){
+        for(int c = 0; c < num_channels; c++){
+            char file_name [50];
+            char prefix [50];
+            sprintf(prefix, "scanning-%s", channels[c]);
+            sprintf(file_name, "scanning-%s-%d", channels[c], iteration);
+            
+            int airodump_pid = startAirodumpScan(prefix, channels[c]);
+            scanning_state=1;
+
+            //setup timeout for the scanning and attacking
+            signal(SIGALRM, sig_handler);
+            alarm(5);
+            
+            while(scanning_state){
+                //read in the information
+                readCSV("channel1-01.csv");
+                //attack the APs
+                attackAPs(c);
+            }
+            
+            stopAirodumpScan(airodump_pid);
+            //read in AP/station data from a CSV
+            
+        }
+    }
     //printReport();
-
-    //Once done, start freeing memory
-    for(int c = 0; c < num_channels; c++){
-        for(int a = 0; a < num_APs[c]; a++)
-            destroyAP(APs[c][a]);
-        free(APs[c]);
-    }
-    free(APs);
-    free(num_APs);
-
-    for(int c = 0; c < num_channels; c++)
-        free(channels[c]);
-    free(channels);
-    
+    cleanup();
     return 0;
 }
 void initVals(){    
     //get available channels
     channels = getCompatibleChannels(&num_channels);
-
+    scanning_state = 0;
     //if no channels found, error with wireless device
     if(num_channels == 0){
         printf("ERROR: WIRELESS DEVICE ERROR\n");
@@ -59,6 +83,79 @@ void initVals(){
     for(int i = 0; i < num_channels; i++){
         num_APs[i] = 0;
     }
+}
+void cleanup(){
+    //Once done, start freeing memory
+    for(int c = 0; c < num_channels; c++){
+        for(int a = 0; a < num_APs[c]; a++)
+            destroyAP(APs[c][a]);
+        free(APs[c]);
+    }
+
+    
+    free(APs);
+    free(num_APs);
+    free(wireless_device);
+
+    for(int c = 0; c < num_channels; c++)
+        free(channels[c]);
+    free(channels);
+}
+int startAirodumpScan(char* prefix, char*  channel){
+    printf("Scanning channel %3s\n", channel);
+    char command[50];
+    sprintf(command, "airodump-ng -c %s -w %s -o csv,cap %s", channel, prefix, wireless_device);
+    //printf("Command: %s\n", command);
+    pid_t pid = fork();
+    switch(pid){
+        case -1: //error
+            printf("Error running command\n");
+            exit(1);
+            break;
+        case 0: //child
+            //hide output of scanning
+            int dev_null = open("/dev/null", O_WRONLY);
+            dup2(dev_null, 1);
+            dup2(dev_null, 2);
+            close(dev_null);
+
+            //run scanning TODO: check if not running sudo
+            execl("/bin/bash", "sh", "-c", command, NULL);
+            printf("error runnnig scan\n");
+            kill(getppid(), SIGUSR1);
+            exit(1);
+            break;
+        default: //parent
+            break;
+    }
+    return pid;
+}
+void stopAirodumpScan(int pid){
+    //kill off children
+    int status = -1;
+    kill(pid, SIGTERM);
+    sleep(1);
+    waitpid(pid, &status, WNOHANG);
+    kill(pid, SIGKILL);
+}
+int attackAPs(int channel){
+    AP* victims = APs[channel];
+    for(int a = 0; a < num_APs[channel]; a++){
+        if(victims[a].keyCaptured) continue;
+        if(victims->attacked < 5 && victims->num_clients > 0){
+            printf("Victim found: ");
+            PRINT_BSSID(&victims->bssid);
+            printf("\n");
+            printf("\tClients:\n");
+            for(int c = 0; c < victims->num_clients; c++){
+                printf("\t");
+                PRINT_BSSID(&victims->clients[c]);
+                printf("\n");
+            }
+            victims->attacked++;
+        }
+    }
+    return 0; //if successful attack
 }
 void readCSV(char* fileName){
     //open up csv
@@ -134,23 +231,25 @@ void read_Station_Data(char* line){
         }
         tokens++;
     } while( (token = strtok(NULL,",")) != NULL);
-    /*
-    printf("%15s", "Station BSSID: ");
-    PRINT_BSSID(&sbssid);
-    printf("\n%15s", "AP BSSID: ");
-    PRINT_BSSID(&bssid);
-    printf("\n");*/
 
     //find associated AP
     for(int c = 0; c < num_channels; c++){
         for(int a = 0; a < num_APs[c]; a++){
             if(memcmp(&(APs[c][a].bssid), &bssid, sizeof(BSSID)) == 0){
-                //printf("AP FOUND\n");
+                //Once AP is found, see if it already exists in list
+                for(int client = 0; client < APs[c][a].num_clients; client++){
+                    if(memcmp( &APs[c][a].clients[client], &sbssid, sizeof(BSSID)) == 0){
+                        return;
+                    }
+                }
+                //if not found
                 addClient(&APs[c][a],sbssid);
+                return;
                 //printf("Num clients: %d\n", APs[c][a].num_clients);
             }
         }
     }
+    //if AP not in list do nothing
 }
 void read_AP_Data(char* line){
     //BSSID of AP
@@ -179,15 +278,6 @@ void read_AP_Data(char* line){
         tokens++;
     } while( (token = strtok(NULL,",")) != NULL);
 
-    //DEBUG: print AP data
-    /*
-    printf("\nAP BSSID: ");
-    PRINT_BSSID(&bssid);
-    printf("\nAP ESSID (%lu): %s\n", strlen(essid), essid);
-    printf("Channel: %d\n", channel);*/
-
-    //create new AP entry
-    AP ap = createAP(essid, bssid);
     //find out which channel index this AP belongs
     int i;
     for(i = 0; i < num_channels; i++){
@@ -198,32 +288,32 @@ void read_AP_Data(char* line){
         free(essid);
         return;
     }
-    //check if bssid already exists
-    int j;
-    for(j = 0; j < num_APs[i]; j++){
-        if(memcmp(&(APs[i][j].bssid),&(ap.bssid), sizeof(struct BSSID)) == 0){
-            /*printf("DUPLICATE FOUND\n");
-            PRINT_BSSID(&(APs[i][j].bssid));
-            printf("\n");
-            PRINT_BSSID(&(ap.bssid));
-            printf("\n");*/
-            break;
+
+    //check if AP already exists in list
+    int a = 0;
+    for(a = 0; a < num_APs[i]; a++){
+        if(memcmp(&APs[i][a],&bssid, sizeof(struct BSSID)) == 0){
+            free(essid);
+            return;
         }
     }
-    //if entry found...
-    if(j != num_APs[i]){
+    //if entry already exists... check to see if essid needs an update
+    if(a != num_APs[i]){
         //if essids match prev record, erase new record
-        if(strcmp(APs[i][j].essid,ap.essid) == 0)
+        if(strcmp(APs[i][a].essid,essid) == 0)
             free(essid);
         //if new essid is not blank, overwrite old essid with new essid
         else{
-            if(strlen(ap.essid) != 0){
-                free(APs[i][j].essid);
-                APs[i][j].essid = ap.essid;
+            if(strlen(essid) != 0){
+                free(APs[i][a].essid);
+                APs[i][a].essid = essid;
             }
         }
         return;
     }
+
+    //create new AP entry since it does not exist
+    AP ap = createAP(essid, bssid);
 
     //add to list of APs in that channel
     num_APs[i] ++;
@@ -244,6 +334,7 @@ AP createAP(char* name, struct BSSID bssid){
     ap.clients = NULL;
     ap.num_clients = 0;
     ap.keyCaptured = false;
+    ap.attacked = 0;
     return ap;
 }
 
@@ -265,12 +356,13 @@ char* getWirelessDevice(){
     char* buffer = malloc(buffer_sz);
     memset(buffer, 0, buffer_sz);
 
-    //run command
+    //run command through socket
     commands = popen("iw dev", "r");
 
     //check if command had error
     if(commands == NULL){
         printf("ERROR: 'iw dev' failed\n");
+        free(buffer);
         return NULL;
     }
 
@@ -286,15 +378,23 @@ char* getWirelessDevice(){
             interface[num_wireless_devices-1] = malloc( sizeof(char) * 50 );
         } 
     }
+    
+    //close up socket and buffer
+    pclose(commands);
+    free(buffer);
 
-    //print wireless device options
+    //resize the interfaces list
     num_wireless_devices--;
+    free(interface[num_wireless_devices]);
     interface = realloc(interface, sizeof(char*) * num_wireless_devices);
+    
+    //print wireless device options
     for(int i = 0; i < num_wireless_devices; i++){
         printf("Interface %d: %s\n", i+1, interface[i]);
     }
     printf("\n\n");
 
+    //let users choose which interface they use
     int selection = 0;
     do{
         printf("Choose which interface you want: ");
@@ -306,13 +406,17 @@ char* getWirelessDevice(){
         fflush(stdin);
     }while(selection == 0);
 
-    
+    //allocate interface name
     char* answer = strdup(interface[selection-1]);
-    printf("Using: %s", answer);
+    
+    //free up interface list
+    printf("Using: %s\n", answer);
     for(int i = 0; i < num_wireless_devices; i++){
         free(interface[i]);
     }
     free(interface);
+
+    //return allocated interface name
     return answer;
 }
 char** getCompatibleChannels(int* num_channels){
@@ -324,9 +428,7 @@ char** getCompatibleChannels(int* num_channels){
 
     //create and execute commannd: iwlist {WIRELESS_DEVICE} channel
     char command[strlen(wireless_device) + strlen("iwlist  channel 2>&1") + 1];
-    strcpy(command , "iwlist ");
-    strcat(command, wireless_device);
-    strcat(command, " channel 2>&1");
+    sprintf(command, "iwlist %s channel 2>&1", wireless_device);
     commands = popen(command, "r");
 
     //get output from command
@@ -342,9 +444,9 @@ char** getCompatibleChannels(int* num_channels){
     
     //scan for the number of channels compatible with our wireless device
     char scan[strlen(wireless_device) + strlen("   %d channels") + 1];
-    strcpy(scan, wireless_device);
-    strcat(scan, "  %d channels");
+    sprintf(scan, "%s %%d channels", wireless_device);
     sscanf(buffer, scan, num_channels);
+    printf("Scan %s\n", scan);
     printf("Number of channels found %d\n", *num_channels);
     
     //get the channel numbers that are compatible
