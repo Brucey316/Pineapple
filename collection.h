@@ -9,6 +9,7 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <signal.h>
+#include <regex.h>
 
 struct BSSID{
     uint8_t oui[3];
@@ -33,8 +34,8 @@ typedef struct AP{
         &(new_bssid)->nic[0],&(new_bssid)->nic[1],&(new_bssid)->nic[2]);\
 } while (0)
 //converts and prints byte BSSID to string BSSID
-#define PRINT_BSSID(bssid) do{ \
-    printf("%02X:%02X:%02X:%02X:%02X:%02X", \
+#define BSSID_TO_STRING(bssid, sbssid) do{ \
+    sprintf(sbssid, "%02X:%02X:%02X:%02X:%02X:%02X", \
         (bssid)->oui[0],(bssid)->oui[1],(bssid)->oui[2],\
         (bssid)->nic[0],(bssid)->nic[1],(bssid)->nic[2]); \
 } while (0)
@@ -43,7 +44,9 @@ void initVals();
 void cleanup();
 int startAirodumpScan(char* prefix, char* channel);
 void stopAirodumpScan(int pid);
-int attackAPs(int channel);
+int attackAPs(int channel, char*);
+void runDeauth(char* ap_bssid, char* client_bssid);
+void checkKey(char* filename, int channel);
 void readCSV(char* filename);
 void read_Station_Data(char* line);
 void read_AP_Data(char* line);
