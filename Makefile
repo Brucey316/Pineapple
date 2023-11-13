@@ -1,21 +1,24 @@
+BINARY=collection.run
 CC = gcc
 OPT=-O0
 DEPFLAGS=-MP -MD
-CFLAGS=-lpthread -Wall -Wextra -g $(OPT) $(DEPFLAGS)CFILES = %.c
+CFLAGS=-Wall -g $(OPT) $(DEPFLAGS) 
+CFILES = $(wildcard *.c)
 OBJECTS=$(patsubst %.c,%.o,$(CFILES))
 DEPFILES=$(patsubst %.c,%.d,$(CFILES))
 
-all: collection 
+all: $(BINARY) 
 
-#dynamicList: dynamicList.c dynamicList.h
-#	$(CC) $(ARGS) -c dynamicList.c -o dynamicList.o
-
-collection: $(OBJECTS)
+$(BINARY): $(OBJECTS)
 	$(CC) -o $@ $^
 
-%.o : %.c
+%.o: %.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+clean:
+	rm -rf $(OBJECTS) $(DEPFILES)
+clean-all:
+	rm -rf $(BINARY) $(OBJECTS) $(DEPFILES)
 check-mem:
 	valgrind --leak-check=full --track-origins=yes -s ./collection.run
 
