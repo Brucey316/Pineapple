@@ -4,30 +4,45 @@ extern AP** APs;
 extern int* num_APs;
 extern int num_channels;
 extern char* wireless_device;
+extern WINDOW* data;
+extern new_data;
+extern step;
 
-AP createAP(char* name, struct BSSID bssid){
+AP createAP(char* name, BSSID bssid, int channel){
+    //printf("Found AP %s\n", name);
     AP ap;
     ap.bssid = bssid;
     ap.essid = name;
     ap.clients = NULL;
     ap.num_clients = 0;
     ap.keyCaptured = false;
-    ap.attacked = 0;
+    ap.channel = channel;
+    ap.attacked = false;
+
+    new_data = true;
+
     return ap;
 }
 
-void addClient(AP* ap, struct BSSID bssid){
+void addClient(AP* ap, BSSID bssid){
     ap->num_clients ++;
-    ap->clients = realloc(ap->clients, sizeof(BSSID) * ap->num_clients);
+
+    if(ap->clients == NULL)
+        ap->clients = (Client*) malloc(sizeof(Client));
+    else
+        ap->clients = (Client*) realloc(ap->clients, sizeof(Client) * ap->num_clients);
+
     memcpy(&(ap->clients[ap->num_clients-1].bssid), &(bssid), sizeof(BSSID));
     ap->clients[ap->num_clients-1].attack_count = 0;
+    ap->clients[ap->num_clients-1].attacked = false;
+
+    new_data = true;
 }
 
 void destroyAP(AP ap){
     free(ap.clients);
     free(ap.essid);
 }
-
 
 char* getWirelessDevice(){
     //init variables
@@ -129,9 +144,11 @@ char** getCompatibleChannels(){
     }
     
     //scan for the number of channels compatible with our wireless device
-    char scan[strlen(wireless_device) + strlen("   %d channels") + 1];
+    size_t scan_len = strlen(wireless_device) + strlen(" %d channels") + 1;
+    char scan[scan_len];
+    memset(scan, 0, scan_len);
     sprintf(scan, "%s %%d channels", wireless_device);
-    sscanf(buffer, scan, num_channels);
+    sscanf(buffer, scan, &num_channels);
     //printf("Number of channels found: %d\n", *num_channels);
     
     //get the channel numbers that are compatible
@@ -148,14 +165,52 @@ char** getCompatibleChannels(){
     return channels;
 }
 
+void savePackets(char* capture_file){
+    //create tshark command from hashcat documentation to strip
+    //all but necessary packets from pcap
+    step = STEP_SAVING_PCAP;
+    char stripping[300] = "";
+    sprintf(stripping, "tshark -r %s -R \"(wlan.fc.type_subtype == 0x00 || wlan.fc.type_subtype == 0x02 || wlan.fc.type_subtype == 0x04 || wlan.fc.type_subtype == 0x05 || wlan.fc.type_subtype == 0x08 || eapol)\" -2 -F pcapng -w stripped.pcapng", capture_file);
+    //run said command
+    FILE* temp = popen(stripping, "r");
+    if(temp==NULL) printf("ERROR TRIMMING PCAP\n");
+    pclose(temp);
+
+    //check if output file exists
+    temp=fopen(OUTPUT_FILE, "r");
+    char merge_command[75] = "";
+    
+    wprintw(data, "Saving handshake to %s\n", OUTPUT_FILE);
+    //check if OUTPUT file exists
+    if(temp == NULL){ 
+        sprintf(merge_command, "mergecap stripped.pcapng -w %s", OUTPUT_FILE);
+    }
+    //if does exist, close and add to merge
+    else{
+        sprintf(merge_command, "mergecap -a %s stripped.pcapng -w %s", OUTPUT_FILE, OUTPUT_FILE);
+        fclose(temp);
+    }
+    
+    //merge pcap files
+    temp = popen(merge_command, "r");
+    if(temp == NULL) printf("ERROR INIT MERGE FAILED");
+    pclose(temp);
+    
+    //delete stripped pcap file
+    temp = popen("rm stripped.pcapng", "r");
+    if(temp == NULL) printf("ERROR RM OF STRIPPED FAILED");
+    pclose(temp);
+    
+}
 
 void printReport(){
+    printf("printing report...");
     //iterate through each channel
     for(int c = 0; c < num_channels; c++){
         //iterate through each AP on each channel
         for(int a = 0; a < num_APs[c]; a++){
             //print data regarding AP
-            char AP_BSSID [18] = "";
+            char AP_BSSID [BSSID_LENGTH] = "";
             BSSID_TO_STRING(&APs[c][a].bssid, AP_BSSID);
             printf("%-35s (%s): %d\n", APs[c][a].essid, AP_BSSID, APs[c][a].num_clients);
             for(int client = 0; client < APs[c][a].num_clients; client++){

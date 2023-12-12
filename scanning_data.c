@@ -13,7 +13,7 @@ void readCSV(char* fileName){
         exit(1);
     }
     //var holds length of data on a line
-    int line_length;
+    int line_length = 0;
     //initialize buffer
     size_t buffer_sz = 255*sizeof(char);
     char* buffer = malloc(buffer_sz);
@@ -26,15 +26,12 @@ void readCSV(char* fileName){
         //skip over blank lines
         if(line_length == 2) continue;
 
-        //printf("\n(%d,%d) %s", line_length, reading_stations, line);
-
         //reading in the access points
         if(!reading_stations){
             //allocate space for a duplicate of the buffer
             char* line = strdup(buffer);
             //tokenize the line and delimit on ',' since file is CSV
             char* token = strtok(line,",");
-
             //skip over headers
             //Station MAC header means transition to station data
             if(strcmp(token,"Station MAC") == 0) reading_stations = true;
@@ -45,9 +42,8 @@ void readCSV(char* fileName){
             free(line);
         }  
         //reading in clients
-        if(reading_stations){
-            read_Station_Data(buffer);
-        }
+        else if(reading_stations) 
+            read_Station_Data(buffer);  
     };
 
     free(buffer);
@@ -57,13 +53,15 @@ void read_Station_Data(char* line){
     //var holds the column number
     int tokens = 0;
     //bssid of AP
-    struct BSSID bssid;
+    BSSID bssid;
     memset(&bssid, 0, sizeof(BSSID));
     //bssid of station
-    struct BSSID sbssid;
+    BSSID sbssid;
     memset(&sbssid, 0, sizeof(BSSID));
+
     //tokenized line for CSV
     char* token = strtok(line,",");
+    //iterate through different fields of CSV and extract relevant data
     do{
         //read in station BSSID
         if(tokens == 0)
@@ -84,19 +82,21 @@ void read_Station_Data(char* line){
     } while( (token = strtok(NULL,",")) != NULL);
 
     //find associated AP
+    //iterate through channels
     for(int c = 0; c < num_channels; c++){
+        //iterate through access points
         for(int a = 0; a < num_APs[c]; a++){
+            //compare the BSSID of the AP the client is associated with to ones already in APs list
             if(memcmp(&(APs[c][a].bssid), &bssid, sizeof(BSSID)) == 0){
-                //Once AP is found, see if it already exists in list
+                //Once AP is found, see if client already exists in list
                 for(int client = 0; client < APs[c][a].num_clients; client++){
                     if(memcmp( &APs[c][a].clients[client], &sbssid, sizeof(BSSID)) == 0){
                         return;
                     }
                 }
-                //if not found
+                //if client not already in AP's list, add it
                 addClient(&APs[c][a],sbssid);
                 return;
-                //printf("Num clients: %d\n", APs[c][a].num_clients);
             }
         }
     }
@@ -104,7 +104,7 @@ void read_Station_Data(char* line){
 }
 void read_AP_Data(char* line){
     //BSSID of AP
-    struct BSSID bssid;
+    BSSID bssid;
     //ESSID of AP
     char* essid = NULL;
     //AP channel
@@ -113,18 +113,17 @@ void read_AP_Data(char* line){
     int tokens = 0;
     //tonized line
     char* token = strtok(line,",");
-
+    //parse through fields of CSV data and extract relevant data
     do{
         //column 1 (bssid)
-        if(tokens == 0)
-            PACK_BSSID(token, &bssid);
+        if(tokens == 0) PACK_BSSID(token, &bssid);
         //column 4 (channel)
-        else if(tokens == 3){
-            sscanf(token, " %d", &channel);
-        }
+        else if(tokens == 3) sscanf(token, " %d", &channel);
         //column 14 (essid)
         else if(tokens == 13){
-            essid = strdup(token+1);
+
+            if (strlen(token) == 1 && *token == ' ') essid=strdup(DEFAULT_ESSID);
+            else essid = strdup(token+1);
         }
         tokens++;
     } while( (token = strtok(NULL,",")) != NULL);
@@ -143,7 +142,7 @@ void read_AP_Data(char* line){
     //check if AP already exists in list
     int a = 0;
     for(a = 0; a < num_APs[i]; a++){
-        if(memcmp(&APs[i][a],&bssid, sizeof(struct BSSID)) == 0){
+        if(memcmp(&APs[i][a],&bssid, sizeof(BSSID)) == 0){
             free(essid);
             return;
         }
@@ -155,7 +154,7 @@ void read_AP_Data(char* line){
             free(essid);
         //if new essid is not blank, overwrite old essid with new essid
         else{
-            if(strlen(essid) != 0){
+            if(strcmp(essid, DEFAULT_ESSID) != 0){
                 free(APs[i][a].essid);
                 APs[i][a].essid = essid;
             }
@@ -164,7 +163,7 @@ void read_AP_Data(char* line){
     }
 
     //create new AP entry since it does not exist
-    AP ap = createAP(essid, bssid);
+    AP ap = createAP(essid, bssid, channel);
 
     //add to list of APs in that channel
     num_APs[i] ++;

