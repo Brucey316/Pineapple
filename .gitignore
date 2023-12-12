@@ -3,6 +3,4 @@
 *.run
 *.o
 *.d
-*.list
 .vscode
-*.linux
